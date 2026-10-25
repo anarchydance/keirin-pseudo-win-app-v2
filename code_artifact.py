@@ -9,37 +9,44 @@ st.caption("オッズ画面のテキストから、擬似単勝・人気順位�
 
 st.markdown("---")
 
-# --- 出走車番数の手動選択 ---
-col1, col2 = st.columns([1, 1])
-with col1:
-    car_count_mode = st.radio(
-        "出走車番の数を選択", 
-        [9, 8, 7], 
-        index=1, 
-        horizontal=True, 
-        help="通常のレースは9車、8車立てや7車立ての場合はここで合わせてください"
-    )
-
 # --- URLパラメーターの取得（ブックマークレット連携用） ---
 query_params = st.query_params
 default_text = query_params.get("odds_text", "")
 
 st.subheader("📊 オッズテキスト")
-pasted_text = st.text_area(
-    "オッズテキスト（ブックマークレットから自動入力されます）", 
-    value=default_text, 
-    height=160, 
-    placeholder="ここにコピーしたテキストを貼り付けてください..."
-)
+pasted_text = st.text_area("オッズテキスト（ブックマークレットから自動入力されます）", value=default_text, height=160, placeholder="ここにコピーしたテキストを貼り付けてください...")
+
+# --- 車番数の自動判定 & 手動選択 ---
+all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', pasted_text) if pasted_text else []
+data_count = len(all_odds_raw_temp)
+
+# データ数に応じた推定車番
+estimated_cars = 9
+if data_count >= 450:
+    estimated_cars = 9
+elif data_count >= 280:
+    estimated_cars = 8
+elif data_count >= 150:
+    estimated_cars = 7
+
+col1, col2 = st.columns([2, 1])
+with col1:
+    mode_options = ["自動判定", 9, 8, 7]
+    selected_mode = st.radio("車番数モード", mode_options, index=0, horizontal=True, help="自動判定はデータ数から自動推測します。必要に応じて手動で固定できます。")
+
+if selected_mode == "自動判定":
+    car_count_mode = estimated_cars
+    st.info(f"💡 データ数（{data_count}件）から **{car_count_mode}車立て** として自動判定しました。")
+else:
+    car_count_mode = selected_mode
 
 if not pasted_text.strip():
     st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
     st.stop()
 
-# 選択された車番数に応じた車番リストを生成（例: 8車なら 1〜8）
+# --- 以降の計算ロジック ---
 cars = list(range(1, car_count_mode + 1))
 
-# --- 組み合わせ生成関数 ---
 def get_combinations(first_car, all_cars):
     combs = []
     other_cars = [c for c in all_cars if c != first_car]
@@ -49,13 +56,11 @@ def get_combinations(first_car, all_cars):
                 combs.append((first_car, c2, c3))
     return combs
 
-# テキストから「オッズ数値（小数含む）」を順番通りにすべて抽出
-all_odds_raw = re.findall(r'(\d{1,5}\.\d+)', pasted_text)
+all_odds_raw = all_odds_raw_temp
 
 records = []
 odds_idx = 0
 
-# 各1着車番ごとに組み合わせ順に割り当て（9999.9なども位置をズラさないために全数取得）
 for first_car in cars:
     combs = get_combinations(first_car, cars)
     for c1, c2, c3 in combs:
@@ -80,10 +85,7 @@ for car in cars:
     car_records = [r for r in records if r["first"] == car]
     if not car_records:
         continue
-    
-    # 9999.9（極大オッズ/未設定）は擬似単勝オッズの計算対象から除外
     valid_odds = [r["odds"] for r in car_records if 0 < r["odds"] < 9998]
-    
     if valid_odds:
         inv_sum = sum(1.0 / odds for odds in valid_odds)
         if inv_sum > 0:
@@ -101,11 +103,15 @@ inv_totals = {car: 1.0 / odds for car, odds in pseudo_odds_map.items()}
 total_inv = sum(inv_totals.values())
 support_rates = {car: (inv / total_inv) * 100 for car, inv in inv_totals.items()}
 
-# --- 1. 指定人気順位の表示 (2, 5, 6, 7, 9番人気) ---
-target_ranks = [2, 5, 6, 7, 9]
-rank_to_car = {rank: car for car, rank in rank_map.items()}
+# --- 車立てごとの対象順位表示 ---
+if car_count_mode == 9:
+    target_ranks = [2, 5, 6, 7, 9]
+    st.markdown("### 🎯 9車立て指定人気順位の車番（9点買い対象）")
+else:
+    target_ranks = [2, 5, 6, 7]
+    st.markdown(f"### 🎯 {car_count_mode}車立て指定人気順位の車番（6点買い対象）")
 
-st.markdown("### 🎯 指定人気順位の車番")
+rank_to_car = {rank: car for car, rank in rank_map.items()}
 
 result_data = []
 for r_target in target_ranks:
@@ -128,7 +134,7 @@ for r_target in target_ranks:
 df_target = pd.DataFrame(result_data)
 st.table(df_target)
 
-# --- 2. 全車番一覧の表示 ---
+# --- 全車番一覧の表示 ---
 st.markdown("### 📋 全車番の擬似単勝オッズ一覧")
 full_data = []
 for car, rank in sorted(rank_map.items(), key=lambda x: x[1]):
