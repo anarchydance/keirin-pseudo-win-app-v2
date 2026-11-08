@@ -1,6 +1,7 @@
 import streamlit as st
 import re
 import pandas as pd
+import itertools
 
 st.set_page_config(page_title="競輪 擬似単勝オッズ計算アプリ", layout="centered")
 
@@ -103,36 +104,79 @@ inv_totals = {car: 1.0 / odds for car, odds in pseudo_odds_map.items()}
 total_inv = sum(inv_totals.values())
 support_rates = {car: (inv / total_inv) * 100 for car, inv in inv_totals.items()}
 
-# --- 車立てごとの対象順位表示（新条件） ---
-if car_count_mode == 9:
-    target_ranks = [1, 3, 4, 5]
-    st.markdown("### 🎯 9車立て指定人気順位の車番（1, 3, 4, 5番人気）")
-else:
-    target_ranks = [1, 2, 3, 4]
-    st.markdown(f"### 🎯 {car_count_mode}車立て指定人気順位の車番（1, 2, 3, 4番人気）")
-
 rank_to_car = {rank: car for car, rank in rank_map.items()}
 
-result_data = []
+# --- 車立てごとの対象順位・除外ルール設定 ---
+if car_count_mode == 9:
+    target_ranks = [1, 3, 4, 5]
+    exclude_pair = {3, 5}  # 9車立ては3番人気と5番人気を除外
+    st.markdown("### 🎯 9車立て 買い目構成（1, 3, 4, 5番人気 / 5点買い）")
+else:
+    target_ranks = [1, 2, 3, 4]
+    exclude_pair = {2, 4}  # 7・8車立ては2番人気と4番人気を除外
+    st.markdown(f"### 🎯 {car_count_mode}車立て 買い目構成（1, 2, 3, 4番人気 / 5点買い）")
+
+# ピックアップ車番一覧の表示
+target_data = []
 for r_target in target_ranks:
     car = rank_to_car.get(r_target)
     if car is not None:
-        result_data.append({
+        target_data.append({
             "人気順位": f"{r_target}番人気",
             "車番": f"{car}番車",
             "擬似単勝オッズ": f"{pseudo_odds_map[car]:.1f}倍",
             "支持率目安": f"{support_rates[car]:.1f}%"
         })
     else:
-        result_data.append({
+        target_data.append({
             "人気順位": f"{r_target}番人気",
             "車番": "該当なし",
             "擬似単勝オッズ": "---",
             "支持率目安": "---"
         })
 
-df_target = pd.DataFrame(result_data)
-st.table(df_target)
+st.markdown("#### 📋 ピックアップ車番一覧")
+st.table(pd.DataFrame(target_data))
+
+# --- ワイド買い目（4車ボックス6点から1点除外して5点にする） ---
+target_cars_map = {r: rank_to_car.get(r) for r in target_ranks}
+
+if None in target_cars_map.values():
+    st.warning("指定された人気順位に対応する車番を特定できませんでした。")
+else:
+    all_pairs = list(itertools.combinations(target_ranks, 2))
+    
+    purchase_bets = []
+    excluded_bets = []
+    
+    for r1, r2 in all_pairs:
+        c1 = target_cars_map[r1]
+        c2 = target_cars_map[r2]
+        pair_cars = tuple(sorted([c1, c2]))
+        
+        bet_info = {
+            "組み合わせ": f"{r1}番人気 ＆ {r2}番人気",
+            "車番ペア": f"{pair_cars[0]}番車 － {pair_cars[1]}番車"
+        }
+        
+        # 除外ペアに合致するか判定
+        if set([r1, r2]) == exclude_pair:
+            excluded_bets.append(bet_info)
+        else:
+            purchase_bets.append(bet_info)
+
+    # 画面表示
+    st.markdown("#### 🚫 除外する買い目")
+    if excluded_bets:
+        st.table(pd.DataFrame(excluded_bets))
+    else:
+        st.info("除外対象の買い目はありません。")
+
+    st.markdown("#### ✅ 実際に購入する買い目（計5点）")
+    if purchase_bets:
+        st.table(pd.DataFrame(purchase_bets))
+    else:
+        st.info("購入対象の買い目がありません。")
 
 # --- 全車番一覧の表示 ---
 st.markdown("### 📋 全車番の擬似単勝オッズ一覧")
@@ -145,5 +189,4 @@ for car, rank in sorted(rank_map.items(), key=lambda x: x[1]):
         "支持率目安": f"{support_rates[car]:.1f}%"
     })
 
-df_full = pd.DataFrame(full_data)
-st.dataframe(df_full, use_container_width=True, hide_index=True)
+st.dataframe(pd.DataFrame(full_data), use_container_width=True, hide_index=True)
