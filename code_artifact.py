@@ -103,13 +103,13 @@ inv_totals = {car: 1.0 / odds for car, odds in pseudo_odds_map.items()}
 total_inv = sum(inv_totals.values())
 support_rates = {car: (inv / total_inv) * 100 for car, inv in inv_totals.items()}
 
-# --- 車立てごとの対象順位表示 ---
+# --- 車立てごとの対象順位表示（新条件） ---
 if car_count_mode == 9:
-    target_ranks = [2, 5, 6, 7, 9]
-    st.markdown("### 🎯 9車立て指定人気順位の車番（9点買い対象）")
+    target_ranks = [1, 3, 4, 5]
+    st.markdown("### 🎯 9車立て指定人気順位の車番（1, 3, 4, 5番人気）")
 else:
-    target_ranks = [2, 5, 6, 7]
-    st.markdown(f"### 🎯 {car_count_mode}車立て指定人気順位の車番（6点買い対象）")
+    target_ranks = [1, 2, 3, 4]
+    st.markdown(f"### 🎯 {car_count_mode}車立て指定人気順位の車番（1, 2, 3, 4番人気）")
 
 rank_to_car = {rank: car for car, rank in rank_map.items()}
 
