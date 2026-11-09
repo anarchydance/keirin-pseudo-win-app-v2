@@ -50,32 +50,31 @@ else:
 # 1車あたりに必要なオッズ数（7車:30個, 8車:42個, 9車:56個）
 per_car_target = (car_count_mode - 1) * (car_count_mode - 2)
 
-# --- 【プロ仕様】車番別・完全独立ブロック抽出ロジック ---
+# --- 【プロ仕様】re.finditerによる完全正確なブロック位置の走査 ---
+# テキスト内にあるすべての「〇番車 全選択」の位置を順番にすべて検出する
+matches = list(re.finditer(r'(\d{1,2})\s*番\s*車\s*全\s*選\s*択', normalized_text))
+
 records = []
 found_blocks = 0
 
-for car_num in range(1, car_count_mode + 1):
-    # 表記ゆれ（スペースや全角半角）に完全対応した「〇番車 全選択」の検索パターン
-    pattern = rf'{car_num}\s*番\s*車\s*全\s*選\s*択'
-    match = re.search(pattern, normalized_text)
-    
-    if match:
+if matches:
+    for idx, match in enumerate(matches):
+        car_num = int(match.group(1))
+        if car_num > car_count_mode:
+            continue
+            
         start_pos = match.end()
         
-        # 次の車番の「全選択」、または末尾の「発売票数」を探してブロックの終了位置とする
-        end_pos = len(normalized_text)
-        for next_car in range(car_num + 1, car_count_mode + 2):
-            next_pattern = rf'{next_car}\s*番\s*車\s*全\s*選\s*択'
-            next_match = re.search(next_pattern, normalized_text[start_pos:])
-            if next_match:
-                end_pos = start_pos + next_match.start()
-                break
-        
-        if car_num == car_count_mode:
+        # 次の車番ブロックの開始位置、または最後の車番なら「発売票数」の位置を終了位置とする
+        if idx + 1 < len(matches):
+            end_pos = matches[idx + 1].start()
+        else:
             vote_match = re.search(r'発\s*売\s*票\s*数', normalized_text[start_pos:])
             if vote_match:
                 end_pos = start_pos + vote_match.start()
-        
+            else:
+                end_pos = len(normalized_text)
+                
         # その車番専用のテキストブロックを切り出し
         block_text = normalized_text[start_pos:end_pos]
         
@@ -94,9 +93,9 @@ for car_num in range(1, car_count_mode + 1):
                 pass
         found_blocks += 1
 
-# 万が一ブロックが1つも検出できなかった場合のエラー停止（誤魔化しのフォールバックは排除）
+# 安全装置：もし何らかの理由でブロックが見つからなかった場合のエラー表示
 if found_blocks == 0 or len(records) == 0:
-    st.error("❌ オッズテキストの構造を認識できませんでした。正しいオッズ画面のテキストがコピーされているか確認してください。")
+    st.error("❌ オッズテキストの構造を認識できませんでした。テキストが正しくコピーされているか確認してください。")
     st.stop()
 
 cars = list(range(1, car_count_mode + 1))
