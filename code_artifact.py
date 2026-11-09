@@ -21,33 +21,32 @@ if not pasted_text.strip():
     st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
     st.stop()
 
-# --- 【完全新ロジック】車番ブロックごとのオッズ抽出 ---
-# 車番全選択のブロック（「1番車 全選択」「2番車 全選択」など）で分割
-blocks = re.split(r'(\d)番車\s*全選択', pasted_text)
+# --- 【高精度クレンジング】オッズ表エリアの正確な切り出し ---
+target_text = pasted_text
 
-records = []
-detected_first_cars = set()
+# 「1番車 全選択」以降のエリアに絞る
+if "1番車 全選択" in target_text:
+    target_text = target_text.split("1番車 全選択", 1)[1]
+elif "1番車" in target_text:
+    target_text = target_text.split("1番車", 1)[1]
 
-if len(blocks) > 1:
-    # 分割成功（ブロック解析）
-    for i in range(1, len(blocks), 2):
-        first_car = int(blocks[i])
-        block_text = blocks[i+1]
-        detected_first_cars.add(first_car)
-        
-        # 行ごとに解析（例: "3 1706.6 2 2417.7 2 906.6" などのパターン）
-        # 数値（小数を含むオッズ）をすべて取得
-        odds_matches = re.findall(r'(\d{1,5}\.\d+)', block_text)
-        for odds_str in odds_matches:
-            try:
-                odds_val = float(odds_str)
-                records.append({"first": first_car, "odds": odds_val})
-            except ValueError:
-                pass
+# 「発売票数」より手前のエリアに絞る（フッターのノイズを完全にカット）
+if "発売票数：" in target_text:
+    target_text = target_text.split("発売票数：")[0]
+elif "発売票数" in target_text:
+    target_text = target_text.split("発売票数")[0]
 
-# 推定車番数の決定（ブロックから検出された1着車番の最大値）
-estimated_cars = max(detected_first_cars) if detected_first_cars else 7
-if estimated_cars not in [7, 8, 9]:
+# --- 全ての小数点付きオッズ候補を順番通りに抽出 ---
+all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', target_text)
+raw_data_count = len(all_odds_raw_temp)
+
+# データ数に応じた推定車番
+estimated_cars = 9
+if raw_data_count >= 450:
+    estimated_cars = 9
+elif raw_data_count >= 280:
+    estimated_cars = 8
+elif raw_data_count >= 150:
     estimated_cars = 7
 
 col1, col2 = st.columns([2, 1])
@@ -57,18 +56,61 @@ with col1:
 
 if selected_mode == "自動判定":
     car_count_mode = estimated_cars
-    st.info(f"💡 検出ブロックから **{car_count_mode}車立て** として自動判定しました。")
+    st.info(f"💡 抽出オッズ数（{raw_data_count}件）から **{car_count_mode}車立て** として判定しました。")
 else:
     car_count_mode = selected_mode
+
+# 各車立ての本来の必要データ数（三連単の全通り数）
+expected_counts = {
+    9: 504,  # 9 * 8 * 7 = 504
+    8: 336,  # 8 * 7 * 6 = 336
+    7: 210   # 7 * 6 * 5 = 210
+}
+
+target_count = expected_counts.get(car_count_mode, 210)
+
+# 正しい個数に完全にスライス（余分なものは容赦なくカット）
+if len(all_odds_raw_temp) > target_count:
+    all_odds_raw = all_odds_raw_temp[:target_count]
+else:
+    all_odds_raw = all_odds_raw_temp
+
+if len(all_odds_raw) < target_count:
+    st.warning(f"⚠️ オッズデータが不足しています。（検出: {len(all_odds_raw)}件 / 必要: {target_count}件）")
+
+# --- 順序通りのオッズを車番の組み合わせに割り当て ---
+cars = list(range(1, car_count_mode + 1))
+
+def get_combinations(first_car, all_cars):
+    combs = []
+    other_cars = [c for c in all_cars if c != first_car]
+    for c2 in other_cars:
+        for c3 in other_cars:
+            if c2 != c3:
+                combs.append((first_car, c2, c3))
+    return combs
+
+records = []
+odds_idx = 0
+
+for first_car in cars:
+    combs = get_combinations(first_car, cars)
+    for c1, c2, c3 in combs:
+        if odds_idx < len(all_odds_raw):
+            try:
+                odds_val = float(all_odds_raw[odds_idx])
+                records.append({"first": c1, "second": c2, "third": c3, "odds": odds_val})
+            except ValueError:
+                pass
+            odds_idx += 1
 
 if not records:
     st.error("オッズデータを自動検出できませんでした。テキスト全体が正しくコピーされているか確認してください。")
     st.stop()
 
-st.success(f"データ解析成功！ （検出: {len(records)} 組の三連単オッズ / 設定: {car_count_mode}車立て）")
+st.success(f"データ解析成功！ （使用データ: {len(records)} 組 / 設定: {car_count_mode}車立て）")
 
 # --- 擬似単勝オッズ計算 ---
-cars = list(range(1, car_count_mode + 1))
 pseudo_odds_map = {}
 
 for car in cars:
