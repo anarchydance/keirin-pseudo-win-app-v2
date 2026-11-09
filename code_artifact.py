@@ -18,29 +18,37 @@ st.subheader("📊 オッズテキスト")
 pasted_text = st.text_area("オッズテキスト（ブックマークレットから自動入力されます）", value=default_text, height=160, placeholder="ここにコピーしたテキストを貼り付けてください...")
 
 if not pasted_text.strip():
-    st.info("💡 ブックマークレットを実行するか, テキストを貼り付けてください。")
+    st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
     st.stop()
 
-# --- 【厳密なクレンジング】「1番車 全選択」以降のオッズエリアのみを正確に抽出 ---
-target_text = pasted_text
-if "1番車 全選択" in target_text:
-    target_text = target_text.split("1番車 全選択", 1)[1]
-elif "1番車" in target_text:
-    target_text = target_text.split("1番車", 1)[1]
+# --- 【完全個別ブロック解析】車番ごとにオッズを正確に切り出す ---
+# 「1番車 全選択」「2番車 全選択」などの区切りごとにテキストを分割
+car_blocks = re.split(r'(\d)番車\s*全選択', pasted_text)
 
-if "発売票数" in target_text:
-    target_text = target_text.split("発売票数")[0]
+records = []
+detected_cars = []
 
-all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', target_text)
-raw_data_count = len(all_odds_raw_temp)
+if len(car_blocks) > 1:
+    # 7車立てなら1車あたり 6 * 5 = 30 個のオッズが必要
+    # 8車立てなら 7 * 6 = 42 個
+    # 9車立てなら 8 * 7 = 56 個
+    
+    for i in range(1, len(car_blocks), 2):
+        car_num = int(car_blocks[i])
+        block_text = car_blocks[i+1]
+        detected_cars.append(car_num)
+        
+        # このブロック内にあるすべての小数点付きオッズを抽出
+        odds_matches = re.findall(r'(\d{1,5}\.\d+)', block_text)
+        
+        records.append({
+            "car": car_num,
+            "raw_odds": odds_matches
+        })
 
 # 車番数の判定
-estimated_cars = 9
-if raw_data_count >= 450:
-    estimated_cars = 9
-elif raw_data_count >= 280:
-    estimated_cars = 8
-elif raw_data_count >= 150:
+estimated_cars = max(detected_cars) if detected_cars else 7
+if estimated_cars not in [7, 8, 9]:
     estimated_cars = 7
 
 col1, col2 = st.columns([2, 1])
@@ -50,36 +58,45 @@ with col1:
 
 if selected_mode == "自動判定":
     car_count_mode = estimated_cars
-    st.info(f"💡 抽出オッズ数（{raw_data_count}件）から **{car_count_mode}車立て** として判定しました。")
+    st.info(f"💡 検出車番から **{car_count_mode}車立て** として判定しました。")
 else:
     car_count_mode = selected_mode
 
-expected_counts = {9: 504, 8: 336, 7: 210}
-target_count = expected_counts.get(car_count_mode, 210)
-all_odds_raw = all_odds_raw_temp[:target_count]
+# 各車番あたりに必要なオッズの数
+per_car_target = (car_count_mode - 1) * (car_count_mode - 2)
 
-# --- 1着車番ごとに綺麗に分割 ---
-cars = list(range(1, car_count_mode + 1))
-per_car_count = (car_count_mode - 1) * (car_count_mode - 2)
-
-records = []
-for car_idx, first_car in enumerate(cars):
-    start_i = car_idx * per_car_count
-    end_i = start_i + per_car_count
-    car_odds_list = all_odds_raw[start_i:end_i]
+# --- 各車番ごとに正確な個数（30個など）にトリミングして結合 ---
+cleaned_records = []
+for block in records:
+    car_num = block["car"]
+    if car_num > car_count_mode:
+        continue
     
-    for odds_str in car_odds_list:
+    odds_list = block["raw_odds"]
+    # 必要数ぴったりにスライス（余分なものは容赦なくカット、不足時はそのまま）
+    trimmed_odds = odds_list[:per_car_target]
+    
+    for odds_str in trimmed_odds:
         try:
-            records.append({"first": first_car, "odds": float(odds_str)})
+            odds_val = float(odds_str)
+            cleaned_records.append({"first": car_num, "odds": odds_val})
         except ValueError:
             pass
+
+cars = list(range(1, car_count_mode + 1))
+
+if not cleaned_records:
+    st.error("オッズデータを自動検出できませんでした。テキスト全体が正しくコピーされているか確認してください。")
+    st.stop()
+
+st.success(f"データ解析成功！ （有効データ総数: {len(cleaned_records)} 組 / 設定: {car_count_mode}車立て）")
 
 # --- 擬似単勝オッズ計算 ---
 pseudo_odds_map = {}
 
 for car in cars:
-    car_records = [r for r in records if r["first"] == car]
-    valid_odds = [r["odds"] for r in car_records]
+    car_records = [r for r in cleaned_records if r["first"] == car]
+    valid_odds = [r["odds"] for r in car_records if 0 < r["odds"] < 9998]
     
     if valid_odds:
         inv_sum = sum(1.0 / odds for odds in valid_odds)
