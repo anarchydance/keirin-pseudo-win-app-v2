@@ -21,31 +21,25 @@ if not pasted_text.strip():
     st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
     st.stop()
 
-# --- 【超堅牢パーサー】車番ブロック分割 ＆ グローバル抽出の二段構え ---
-records = []
-detected_cars = []
+# --- 【完全確定クレンジング】「1番車 全選択」以降のエリアだけを絶対に切り出す ---
+target_text = pasted_text
+if "1番車 全選択" in target_text:
+    # 「1番車 全選択」という文字の直後からスタートする（上部のギヤ倍数ノイズを100%カット）
+    target_text = target_text.split("1番車 全選択", 1)[1]
+elif "1番車" in target_text:
+    target_text = target_text.split("1番車", 1)[1]
 
-# 柔軟な正規表現で「〇番車」を検出して分割
-car_blocks = re.split(r'(\d{1,2})\s*番車', pasted_text)
+# 抽出エリア内にあるすべての小数点付きオッズを順番通りに取得
+all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', target_text)
+raw_data_count = len(all_odds_raw_temp)
 
-if len(car_blocks) > 3:
-    # ブロック分割に成功した場合
-    for i in range(1, len(car_blocks), 2):
-        try:
-            car_num = int(car_blocks[i])
-            block_text = car_blocks[i+1]
-            detected_cars.append(car_num)
-            
-            # ブロック内の小数点付きオッズを抽出
-            odds_list = re.findall(r'(\d{1,5}\.\d+)', block_text)
-            if odds_list:
-                records.append({"car": car_num, "raw_odds": odds_list})
-        except ValueError:
-            pass
-
-# 車番数の判定
-estimated_cars = max(detected_cars) if detected_cars else 7
-if estimated_cars not in [7, 8, 9]:
+# --- 車番数の自動判定 ---
+estimated_cars = 9
+if raw_data_count >= 450:
+    estimated_cars = 9
+elif raw_data_count >= 280:
+    estimated_cars = 8
+elif raw_data_count >= 150:
     estimated_cars = 7
 
 col1, col2 = st.columns([2, 1])
@@ -55,55 +49,50 @@ with col1:
 
 if selected_mode == "自動判定":
     car_count_mode = estimated_cars
-    st.info(f"💡 検出車番から **{car_count_mode}車立て** として判定しました。")
+    st.info(f"💡 検出データ数（{raw_data_count}件）から **{car_count_mode}車立て** として判定しました。")
 else:
     car_count_mode = selected_mode
 
-# 各車番あたりに必要なオッズの数（7車:30個, 8車:42個, 9車:56個）
-per_car_target = (car_count_mode - 1) * (car_count_mode - 2)
+# --- 本来必要なオッズ総数と、1車あたりのオッズ数 ---
+# 7車立て: 総数210 (1車あたり30)
+# 8車立て: 総数336 (1車あたり42)
+# 9車立て: 総数504 (1車あたり56)
+per_car_count = (car_count_mode - 1) * (car_count_mode - 2)
+target_total_count = per_car_count * car_count_mode
 
-cleaned_records = []
+# 【重要】余分なデータ（末尾の投票数など）は容赦なくカットし、必要な数だけを先頭から正確に取得
+if len(all_odds_raw_temp) >= target_total_count:
+    all_odds_raw = all_odds_raw_temp[:target_total_count]
+else:
+    all_odds_raw = all_odds_raw_temp
+    st.warning(f"⚠️ オッズデータが不足しています。（検出: {len(all_odds_raw)}件 / 必要: {target_total_count}件）")
 
-if records:
-    # ブロックごとに必要数ぴったりにトリミング
-    for block in records:
-        car_num = block["car"]
-        if car_num > car_count_mode:
-            continue
-        trimmed_odds = block["raw_odds"][:per_car_target]
-        for odds_str in trimmed_odds:
-            try:
-                cleaned_records.append({"first": car_num, "odds": float(odds_str)})
-            except ValueError:
-                pass
-
-# 【フォールバック安全装置】もしブロック分割でうまく拾えなかった場合は全体から順番に切り出す
-if not cleaned_records:
-    all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', pasted_text)
-    target_total = per_car_target * car_count_mode
-    # 後ろの余分な数字をカットし、車番ごとに均등割り振る
-    flat_odds = all_odds_raw_temp[:target_total]
-    for idx, odds_str in enumerate(flat_odds):
-        car_num = (idx // per_car_target) + 1
-        if car_num <= car_count_mode:
-            try:
-                cleaned_records.append({"first": car_num, "odds": float(odds_str)})
-            except ValueError:
-                pass
-
+# --- 車番ごとに30個（7車の場合）ずつ綺麗に割り振る ---
 cars = list(range(1, car_count_mode + 1))
+records = []
 
-if not cleaned_records:
+for car_idx, car_num in enumerate(cars):
+    start_idx = car_idx * per_car_count
+    end_idx = start_idx + per_car_count
+    car_odds_slice = all_odds_raw[start_idx:end_idx]
+    
+    for odds_str in car_odds_slice:
+        try:
+            records.append({"first": car_num, "odds": float(odds_str)})
+        except ValueError:
+            pass
+
+if not records:
     st.error("オッズデータを自動検出できませんでした。テキスト全体が正しくコピーされているか確認してください。")
     st.stop()
 
-st.success(f"データ解析成功！ （有効データ総数: {len(cleaned_records)} 組 / 設定: {car_count_mode}車立て）")
+st.success(f"データ解析成功！ （使用データ: {len(records)} 組 / 設定: {car_count_mode}車立て）")
 
 # --- 擬似単勝オッズ計算 ---
 pseudo_odds_map = {}
 
 for car in cars:
-    car_records = [r for r in cleaned_records if r["first"] == car]
+    car_records = [r for r in records if r["first"] == car]
     valid_odds = [r["odds"] for r in car_records if 0 < r["odds"] < 9998]
     
     if valid_odds:
