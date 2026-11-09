@@ -21,15 +21,26 @@ if not pasted_text.strip():
     st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
     st.stop()
 
-# --- 【完全確定クレンジング】「1番車 全選択」以降のエリアだけを絶対に切り出す ---
+# --- 【プロ仕様・完全堅牢クレンジング】 ---
 target_text = pasted_text
-if "1番車 全選択" in target_text:
-    # 「1番車 全選択」という文字の直後からスタートする（上部のギヤ倍数ノイズを100%カット）
-    target_text = target_text.split("1番車 全選択", 1)[1]
-elif "1番車" in target_text:
-    target_text = target_text.split("1番車", 1)[1]
 
-# 抽出エリア内にあるすべての小数点付きオッズを順番通りに取得
+# 1. 表記ゆれ（スペースや改行）に完全対応した「1番車 全選択」の位置検索
+match_start = re.search(r'1\s*番\s*車\s*全\s*選\s*択', target_text)
+if match_start:
+    # 「1番車 全選択」の文字位置以降だけを切り出す（上部のギヤ倍数ノイズを100%排除）
+    target_text = target_text[match_start.start():]
+else:
+    # 万が一見つからない場合のフォールバック（最初の「1番車」を探す）
+    match_alt = re.search(r'1\s*番\s*車', target_text)
+    if match_alt:
+        target_text = target_text[match_alt.start():]
+
+# 2. フッター（発売票数など）の位置検索とそれ以降のカット
+match_end = re.search(r'発\s*売\s*票\s*数', target_text)
+if match_end:
+    target_text = target_text[:match_end.start()]
+
+# --- 抽出エリア内にあるすべての小数点付きオッズを順番通りに取得 ---
 all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', target_text)
 raw_data_count = len(all_odds_raw_temp)
 
@@ -49,7 +60,7 @@ with col1:
 
 if selected_mode == "自動判定":
     car_count_mode = estimated_cars
-    st.info(f"💡 検出データ数（{raw_data_count}件）から **{car_count_mode}車立て** として判定しました。")
+    st.info(f"💡 クレンジング後の検出データ数（{raw_data_count}件）から **{car_count_mode}車立て** として判定しました。")
 else:
     car_count_mode = selected_mode
 
@@ -60,14 +71,14 @@ else:
 per_car_count = (car_count_mode - 1) * (car_count_mode - 2)
 target_total_count = per_car_count * car_count_mode
 
-# 【重要】余分なデータ（末尾の投票数など）は容赦なくカットし、必要な数だけを先頭から正確に取得
+# 厳密に必要数だけを先頭からスライス（余分なものは完全に切り捨てる）
 if len(all_odds_raw_temp) >= target_total_count:
     all_odds_raw = all_odds_raw_temp[:target_total_count]
 else:
     all_odds_raw = all_odds_raw_temp
     st.warning(f"⚠️ オッズデータが不足しています。（検出: {len(all_odds_raw)}件 / 必要: {target_total_count}件）")
 
-# --- 車番ごとに30個（7車の場合）ずつ綺麗に割り振る ---
+# --- 車番ごとに綺麗に割り振る ---
 cars = list(range(1, car_count_mode + 1))
 records = []
 
@@ -86,7 +97,7 @@ if not records:
     st.error("オッズデータを自動検出できませんでした。テキスト全体が正しくコピーされているか確認してください。")
     st.stop()
 
-st.success(f"データ解析成功！ （使用データ: {len(records)} 組 / 設定: {car_count_mode}車立て）")
+st.success(f"データ解析成功！ （有効データ数: {len(records)} 組 / 設定: {car_count_mode}車立て）")
 
 # --- 擬似単勝オッズ計算 ---
 pseudo_odds_map = {}
