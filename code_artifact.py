@@ -21,30 +21,27 @@ if not pasted_text.strip():
     st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
     st.stop()
 
-# --- 【完全個別ブロック解析】車番ごとにオッズを正確に切り出す ---
-# 「1番車 全選択」「2番車 全選択」などの区切りごとにテキストを分割
-car_blocks = re.split(r'(\d)番車\s*全選択', pasted_text)
-
+# --- 【超堅牢パーサー】車番ブロック分割 ＆ グローバル抽出の二段構え ---
 records = []
 detected_cars = []
 
-if len(car_blocks) > 1:
-    # 7車立てなら1車あたり 6 * 5 = 30 個のオッズが必要
-    # 8車立てなら 7 * 6 = 42 個
-    # 9車立てなら 8 * 7 = 56 個
-    
+# 柔軟な正規表現で「〇番車」を検出して分割
+car_blocks = re.split(r'(\d{1,2})\s*番車', pasted_text)
+
+if len(car_blocks) > 3:
+    # ブロック分割に成功した場合
     for i in range(1, len(car_blocks), 2):
-        car_num = int(car_blocks[i])
-        block_text = car_blocks[i+1]
-        detected_cars.append(car_num)
-        
-        # このブロック内にあるすべての小数点付きオッズを抽出
-        odds_matches = re.findall(r'(\d{1,5}\.\d+)', block_text)
-        
-        records.append({
-            "car": car_num,
-            "raw_odds": odds_matches
-        })
+        try:
+            car_num = int(car_blocks[i])
+            block_text = car_blocks[i+1]
+            detected_cars.append(car_num)
+            
+            # ブロック内の小数点付きオッズを抽出
+            odds_list = re.findall(r'(\d{1,5}\.\d+)', block_text)
+            if odds_list:
+                records.append({"car": car_num, "raw_odds": odds_list})
+        except ValueError:
+            pass
 
 # 車番数の判定
 estimated_cars = max(detected_cars) if detected_cars else 7
@@ -62,26 +59,37 @@ if selected_mode == "自動判定":
 else:
     car_count_mode = selected_mode
 
-# 各車番あたりに必要なオッズの数
+# 各車番あたりに必要なオッズの数（7車:30個, 8車:42個, 9車:56個）
 per_car_target = (car_count_mode - 1) * (car_count_mode - 2)
 
-# --- 各車番ごとに正確な個数（30個など）にトリミングして結合 ---
 cleaned_records = []
-for block in records:
-    car_num = block["car"]
-    if car_num > car_count_mode:
-        continue
-    
-    odds_list = block["raw_odds"]
-    # 必要数ぴったりにスライス（余分なものは容赦なくカット、不足時はそのまま）
-    trimmed_odds = odds_list[:per_car_target]
-    
-    for odds_str in trimmed_odds:
-        try:
-            odds_val = float(odds_str)
-            cleaned_records.append({"first": car_num, "odds": odds_val})
-        except ValueError:
-            pass
+
+if records:
+    # ブロックごとに必要数ぴったりにトリミング
+    for block in records:
+        car_num = block["car"]
+        if car_num > car_count_mode:
+            continue
+        trimmed_odds = block["raw_odds"][:per_car_target]
+        for odds_str in trimmed_odds:
+            try:
+                cleaned_records.append({"first": car_num, "odds": float(odds_str)})
+            except ValueError:
+                pass
+
+# 【フォールバック安全装置】もしブロック分割でうまく拾えなかった場合は全体から順番に切り出す
+if not cleaned_records:
+    all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', pasted_text)
+    target_total = per_car_target * car_count_mode
+    # 後ろの余分な数字をカットし、車番ごとに均등割り振る
+    flat_odds = all_odds_raw_temp[:target_total]
+    for idx, odds_str in enumerate(flat_odds):
+        car_num = (idx // per_car_target) + 1
+        if car_num <= car_count_mode:
+            try:
+                cleaned_records.append({"first": car_num, "odds": float(odds_str)})
+            except ValueError:
+                pass
 
 cars = list(range(1, car_count_mode + 1))
 
