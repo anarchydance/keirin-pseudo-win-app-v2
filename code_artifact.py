@@ -18,19 +18,23 @@ st.subheader("📊 オッズテキスト")
 pasted_text = st.text_area("オッズテキスト（ブックマークレットから自動入力されます）", value=default_text, height=160, placeholder="ここにコピーしたテキストを貼り付けてください...")
 
 if not pasted_text.strip():
-    st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
+    st.info("💡 ブックマークレットを実行するか, テキストを貼り付けてください。")
     st.stop()
 
-# --- クレンジングとオッズ抽出 ---
+# --- 【厳密なクレンジング】「1番車 全選択」以降のオッズエリアのみを正確に抽出 ---
 target_text = pasted_text
-if "1番車" in target_text:
-    target_text = "1番車" + target_text.split("1番車", 1)[1]
+if "1番車 全選択" in target_text:
+    target_text = target_text.split("1番車 全選択", 1)[1]
+elif "1番車" in target_text:
+    target_text = target_text.split("1番車", 1)[1]
+
 if "発売票数" in target_text:
     target_text = target_text.split("発売票数")[0]
 
 all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', target_text)
 raw_data_count = len(all_odds_raw_temp)
 
+# 車番数の判定
 estimated_cars = 9
 if raw_data_count >= 450:
     estimated_cars = 9
@@ -70,9 +74,8 @@ for car_idx, first_car in enumerate(cars):
         except ValueError:
             pass
 
-# --- 擬似単勝オッズ計算 ＆ 詳細デバッグ出力 ---
+# --- 擬似単勝オッズ計算 ---
 pseudo_odds_map = {}
-debug_car_details = []
 
 for car in cars:
     car_records = [r for r in records if r["first"] == car]
@@ -81,22 +84,7 @@ for car in cars:
     if valid_odds:
         inv_sum = sum(1.0 / odds for odds in valid_odds)
         if inv_sum > 0:
-            p_odds = round(1.0 / inv_sum, 1)
-            pseudo_odds_map[car] = p_odds
-        else:
-            p_odds = 0.0
-    else:
-            p_odds = 0.0
-
-    debug_car_details.append({
-        "車番": f"{car}番車",
-        "計算された擬似単勝": f"{p_odds}倍",
-        "使用オッズ数": len(valid_odds),
-        "オッズ一覧（先頭5個）": str(valid_odds[:5])
-    })
-
-st.markdown("#### 🛠️ 【詳細デバッグ】各車番の計算結果とオッズ一覧")
-st.table(pd.DataFrame(debug_car_details))
+            pseudo_odds_map[car] = round(1.0 / inv_sum, 1)
 
 if not pseudo_odds_map:
     st.warning("計算できるデータがありませんでした。")
@@ -143,6 +131,7 @@ else:
     exclude_pair = {2, 4}
     st.markdown(f"### 🎯 {car_count_mode}車立て 買い目構成（1, 2, 3, 4番人気 / 5点買い）")
 
+# ピックアップ車番一覧の表示
 target_data = []
 for r_target in target_ranks:
     cars_at_rank = rank_to_cars.get(r_target, [])
