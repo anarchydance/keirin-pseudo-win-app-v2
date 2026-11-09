@@ -21,9 +21,11 @@ if not pasted_text.strip():
     st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
     st.stop()
 
-# --- 【車番数の自動判定のための事前スキャン】 ---
-# まずテキスト全体から大まかな車番数（7, 8, 9）を判定する
-all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', pasted_text)
+# --- テキストの正規化（スペースや特殊文字のゆれを吸収） ---
+normalized_text = pasted_text.replace('\xa0', ' ')
+
+# --- 車番数モードの判定 ---
+all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', normalized_text)
 raw_count = len(all_odds_raw_temp)
 
 estimated_cars = 9
@@ -45,65 +47,60 @@ if selected_mode == "自動判定":
 else:
     car_count_mode = selected_mode
 
-# 1車あたりに必要なオッズ数（7車:30, 8車:42, 9車:56）
+# 1車あたりに必要なオッズ数（7車:30個, 8車:42個, 9車:56個）
 per_car_target = (car_count_mode - 1) * (car_count_mode - 2)
 
-# --- 【プロ仕様・車番ブロック別 完全独立パーサー】 ---
-# 「1番車 全選択」「2番車 全選択」などの見出しをキーにしてテキストを車番ごとに完全分割
-car_blocks = re.split(r'(\d{1,2})\s*番\s*車\s*全\s*選\s*択', pasted_text)
-
+# --- 【プロ仕様】車番別・完全独立ブロック抽出ロジック ---
 records = []
-detected_cars = []
+found_blocks = 0
 
-if len(car_blocks) >= 3:
-    # 分割成功：各車番ブロックごとに処理
-    for i in range(1, len(car_blocks), 2):
-        try:
-            car_num = int(car_blocks[i])
-            if car_num > car_count_mode:
-                continue
-            
-            block_text = car_blocks[i+1]
-            detected_cars.append(car_num)
-            
-            # その車番ブロック内にあるすべての小数点付きオッズを抽出
-            block_odds = re.findall(r'(\d{1,5}\.\d+)', block_text)
-            
-            # 必要な個数（例：7車なら30個）だけをこのブロックから正確に取得
-            valid_block_odds = block_odds[:per_car_target]
-            
-            for odds_str in valid_block_odds:
-                try:
-                    val = float(odds_str)
-                    if 0 < val < 9998:
-                        records.append({"first": car_num, "odds": val})
-                except ValueError:
-                    pass
-        except ValueError:
-            pass
-
-# 【フォールバック安全装置】もしブロック分割で車番が検出できなかった場合の保険
-if not records:
-    st.warning("⚠️ ブックマークレットのテキスト構造からブロック分割ができなかったため、標準抽出モードで処理します。")
-    for car_idx, car_num in enumerate(range(1, car_count_mode + 1)):
-        start_idx = car_idx * per_car_target
-        end_idx = start_idx + per_car_target
-        slice_odds = all_odds_raw_temp[start_idx:end_idx]
-        for odds_str in slice_odds:
+for car_num in range(1, car_count_mode + 1):
+    # 表記ゆれ（スペースや全角半角）に完全対応した「〇番車 全選択」の検索パターン
+    pattern = rf'{car_num}\s*番\s*車\s*全\s*選\s*択'
+    match = re.search(pattern, normalized_text)
+    
+    if match:
+        start_pos = match.end()
+        
+        # 次の車番の「全選択」、または末尾の「発売票数」を探してブロックの終了位置とする
+        end_pos = len(normalized_text)
+        for next_car in range(car_num + 1, car_count_mode + 2):
+            next_pattern = rf'{next_car}\s*番\s*車\s*全\s*選\s*択'
+            next_match = re.search(next_pattern, normalized_text[start_pos:])
+            if next_match:
+                end_pos = start_pos + next_match.start()
+                break
+        
+        if car_num == car_count_mode:
+            vote_match = re.search(r'発\s*売\s*票\s*数', normalized_text[start_pos:])
+            if vote_match:
+                end_pos = start_pos + vote_match.start()
+        
+        # その車番専用のテキストブロックを切り出し
+        block_text = normalized_text[start_pos:end_pos]
+        
+        # ブロック内のすべての小数点付きオッズを抽出
+        block_odds = re.findall(r'(\d{1,5}\.\d+)', block_text)
+        
+        # 必要な個数（例: 7車なら正確に30個）だけを取得
+        valid_odds = block_odds[:per_car_target]
+        
+        for odds_str in valid_odds:
             try:
                 val = float(odds_str)
                 if 0 < val < 9998:
                     records.append({"first": car_num, "odds": val})
             except ValueError:
                 pass
+        found_blocks += 1
 
-cars = list(range(1, car_count_mode + 1))
-
-if not records:
-    st.error("オッズデータを自動検出できませんでした。テキスト全体が正しくコピーされているか確認してください。")
+# 万が一ブロックが1つも検出できなかった場合のエラー停止（誤魔化しのフォールバックは排除）
+if found_blocks == 0 or len(records) == 0:
+    st.error("❌ オッズテキストの構造を認識できませんでした。正しいオッズ画面のテキストがコピーされているか確認してください。")
     st.stop()
 
-st.success(f"データ解析成功！ （有効データ総数: {len(records)} 組 / 設定: {car_count_mode}車立て）")
+cars = list(range(1, car_count_mode + 1))
+st.success(f"データ解析成功！ （検出車番ブロック数: {found_blocks} / 有効オッズ総数: {len(records)} 組 / 設定: {car_count_mode}車立て）")
 
 # --- 擬似単勝オッズ計算 ---
 pseudo_odds_map = {}
