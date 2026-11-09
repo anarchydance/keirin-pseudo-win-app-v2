@@ -37,7 +37,7 @@ with col1:
 
 if selected_mode == "自動判定":
     car_count_mode = estimated_cars
-    st.info(f"💡 データ数（{raw_data_count}件）から **{car_count_mode}車立て** として自動判定しました。")
+    st.info(f"💡 検出データ数（{raw_data_count}件）から **{car_count_mode}車立て** として判定しました。")
 else:
     car_count_mode = selected_mode
 
@@ -54,11 +54,16 @@ expected_counts = {
 
 target_count = expected_counts.get(car_count_mode, 210)
 
-# 本来のデータ数ぴったりに切り出す（末尾の余計なノイズを自動カット）
-all_odds_raw = all_odds_raw_temp[:target_count]
+# 【重要】余分なデータ（末尾のシステム文字等）がいくつ混ざっていても、
+# 設定された車立ての本来の組み合わせ数（7車なら210個）に強制的にスライスする
+if len(all_odds_raw_temp) > target_count:
+    all_odds_raw = all_odds_raw_temp[:target_count]
+    st.caption(f"ℹ️ 検出されたデータが多いため、先頭から正確な {target_count} 件分に調整しました。")
+else:
+    all_odds_raw = all_odds_raw_temp
 
 if len(all_odds_raw) < target_count:
-    st.warning(f"⚠️ オッズデータが不足している可能性があります。（検出: {len(all_odds_raw)}件 / 必要: {target_count}件）")
+    st.warning(f"⚠️ オッズデータが不足しています。（検出: {len(all_odds_raw)}件 / 必要: {target_count}件）")
 
 # --- 以降の計算ロジック ---
 cars = list(range(1, car_count_mode + 1))
@@ -112,7 +117,6 @@ if not pseudo_odds_map:
 # --- 人気順位・支持率の計算（同率対応） ---
 sorted_cars = sorted(pseudo_odds_map.items(), key=lambda x: x[1])
 
-# オッズごとの出現頻度をカウント
 odds_freq = {}
 for _, odds in sorted_cars:
     odds_freq[odds] = odds_freq.get(odds, 0) + 1
@@ -132,7 +136,6 @@ for i, (car, odds) in enumerate(sorted_cars):
         rank_to_cars[actual_rank] = []
     rank_to_cars[actual_rank].append(car)
     
-    # 同率の場合は注釈を付与
     if odds_freq[odds] > 1:
         display_rank_map[car] = f"{actual_rank}位（同率）"
     else:
@@ -198,13 +201,11 @@ else:
             "車番ペア": f"{pair_cars[0]}番車 － {pair_cars[1]}番車"
         }
         
-        # 除外ペアに合致するか判定
         if set([r1, r2]) == exclude_pair:
             excluded_bets.append(bet_info)
         else:
             purchase_bets.append(bet_info)
 
-    # 画面表示
     st.markdown("#### 🚫 除外する買い目")
     if excluded_bets:
         st.table(pd.DataFrame(excluded_bets))
