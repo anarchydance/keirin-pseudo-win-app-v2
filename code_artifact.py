@@ -96,15 +96,38 @@ if not pseudo_odds_map:
     st.warning("計算できるデータがありませんでした。")
     st.stop()
 
-# 人気順位・支持率の計算
+# --- 人気順位・支持率の計算（同率対応） ---
 sorted_cars = sorted(pseudo_odds_map.items(), key=lambda x: x[1])
-rank_map = {car: idx for idx, (car, odds) in enumerate(sorted_cars, 1)}
+
+# オッズごとの出現頻度をカウント
+odds_freq = {}
+for _, odds in sorted_cars:
+    odds_freq[odds] = odds_freq.get(odds, 0) + 1
+
+rank_map = {}
+display_rank_map = {}
+rank_to_cars = {}
+
+for i, (car, odds) in enumerate(sorted_cars):
+    if i > 0 and odds == sorted_cars[i-1][1]:
+        rank_map[car] = rank_map[sorted_cars[i-1][0]]
+    else:
+        rank_map[car] = i + 1
+        
+    actual_rank = rank_map[car]
+    if actual_rank not in rank_to_cars:
+        rank_to_cars[actual_rank] = []
+    rank_to_cars[actual_rank].append(car)
+    
+    # 同率の場合は注釈を付与
+    if odds_freq[odds] > 1:
+        display_rank_map[car] = f"{actual_rank}位（同率）"
+    else:
+        display_rank_map[car] = f"{actual_rank}位"
 
 inv_totals = {car: 1.0 / odds for car, odds in pseudo_odds_map.items()}
 total_inv = sum(inv_totals.values())
 support_rates = {car: (inv / total_inv) * 100 for car, inv in inv_totals.items()}
-
-rank_to_car = {rank: car for car, rank in rank_map.items()}
 
 # --- 車立てごとの対象順位・除外ルール設定 ---
 if car_count_mode == 9:
@@ -119,17 +142,20 @@ else:
 # ピックアップ車番一覧の表示
 target_data = []
 for r_target in target_ranks:
-    car = rank_to_car.get(r_target)
-    if car is not None:
-        target_data.append({
-            "人気順位": f"{r_target}番人気",
-            "車番": f"{car}番車",
-            "擬似単勝オッズ": f"{pseudo_odds_map[car]:.1f}倍",
-            "支持率目安": f"{support_rates[car]:.1f}%"
-        })
+    cars_at_rank = rank_to_cars.get(r_target, [])
+    if cars_at_rank:
+        for car in cars_at_rank:
+            target_data.append({
+                "人気順位": f"{r_target}番人気",
+                "順位表示": display_rank_map[car],
+                "車番": f"{car}番車",
+                "擬似単勝オッズ": f"{pseudo_odds_map[car]:.1f}倍",
+                "支持率目安": f"{support_rates[car]:.1f}%"
+            })
     else:
         target_data.append({
             "人気順位": f"{r_target}番人気",
+            "順位表示": "---",
             "車番": "該当なし",
             "擬似単勝オッズ": "---",
             "支持率目安": "---"
@@ -139,7 +165,7 @@ st.markdown("#### 📋 ピックアップ車番一覧")
 st.table(pd.DataFrame(target_data))
 
 # --- ワイド買い目（4車ボックス6点から1点除外して5点にする） ---
-target_cars_map = {r: rank_to_car.get(r) for r in target_ranks}
+target_cars_map = {r: rank_to_cars.get(r, [None])[0] for r in target_ranks}
 
 if None in target_cars_map.values():
     st.warning("指定された人気順位に対応する車番を特定できませんでした。")
@@ -181,9 +207,9 @@ else:
 # --- 全車番一覧の表示 ---
 st.markdown("### 📋 全車番の擬似単勝オッズ一覧")
 full_data = []
-for car, rank in sorted(rank_map.items(), key=lambda x: x[1]):
+for car, rank in sorted(rank_map.items(), key=lambda x: (x[1], pseudo_odds_map[x[0]])):
     full_data.append({
-        "順位": f"{rank}位",
+        "順位": display_rank_map[car],
         "車番": f"{car}番車",
         "擬似単勝オッズ": f"{pseudo_odds_map[car]:.1f}倍",
         "支持率目安": f"{support_rates[car]:.1f}%"
