@@ -19,15 +19,15 @@ pasted_text = st.text_area("オッズテキスト（ブックマークレット�
 
 # --- 車番数の自動判定 & 手動選択 ---
 all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', pasted_text) if pasted_text else []
-data_count = len(all_odds_raw_temp)
+raw_data_count = len(all_odds_raw_temp)
 
 # データ数に応じた推定車番
 estimated_cars = 9
-if data_count >= 450:
+if raw_data_count >= 450:
     estimated_cars = 9
-elif data_count >= 280:
+elif raw_data_count >= 280:
     estimated_cars = 8
-elif data_count >= 150:
+elif raw_data_count >= 150:
     estimated_cars = 7
 
 col1, col2 = st.columns([2, 1])
@@ -37,13 +37,28 @@ with col1:
 
 if selected_mode == "自動判定":
     car_count_mode = estimated_cars
-    st.info(f"💡 データ数（{data_count}件）から **{car_count_mode}車立て** として自動判定しました。")
+    st.info(f"💡 データ数（{raw_data_count}件）から **{car_count_mode}車立て** として自動判定しました。")
 else:
     car_count_mode = selected_mode
 
 if not pasted_text.strip():
     st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
     st.stop()
+
+# --- 各車立ての本来の必要データ数（三連単の全通り数） ---
+expected_counts = {
+    9: 504,  # 9 * 8 * 7
+    8: 336,  # 8 * 7 * 6
+    7: 210   # 7 * 6 * 5
+}
+
+target_count = expected_counts.get(car_count_mode, 210)
+
+# 本来のデータ数ぴったりに切り出す（末尾の余計なノイズを自動カット）
+all_odds_raw = all_odds_raw_temp[:target_count]
+
+if len(all_odds_raw) < target_count:
+    st.warning(f"⚠️ オッズデータが不足している可能性があります。（検出: {len(all_odds_raw)}件 / 必要: {target_count}件）")
 
 # --- 以降の計算ロジック ---
 cars = list(range(1, car_count_mode + 1))
@@ -56,8 +71,6 @@ def get_combinations(first_car, all_cars):
             if c2 != c3:
                 combs.append((first_car, c2, c3))
     return combs
-
-all_odds_raw = all_odds_raw_temp
 
 records = []
 odds_idx = 0
@@ -77,7 +90,7 @@ if not records:
     st.error("オッズデータを自動検出できませんでした。テキスト全体が正しくコピーされているか確認してください。")
     st.stop()
 
-st.success(f"データ解析成功！ （検出データ: {len(records)} 組 / 設定: {car_count_mode}車立て）")
+st.success(f"データ解析成功！ （使用データ: {len(records)} 組 / 設定: {car_count_mode}車立て）")
 
 # --- 擬似単勝オッズ計算 ---
 pseudo_odds_map = {}
