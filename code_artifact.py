@@ -17,8 +17,22 @@ default_text = query_params.get("odds_text", "")
 st.subheader("📊 オッズテキスト")
 pasted_text = st.text_area("オッズテキスト（ブックマークレットから自動入力されます）", value=default_text, height=160, placeholder="ここにコピーしたテキストを貼り付けてください...")
 
+if not pasted_text.strip():
+    st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
+    st.stop()
+
+# --- 【重要】オッズ領域の事前クレンジング ---
+# 「1番車 全選択」以降のテキストのみを抽出（ヘッダーの「ギヤ倍数3.92」や「更新時間13.20」などのノイズを除去）
+clean_text = pasted_text
+if "1番車" in pasted_text:
+    clean_text = "1番車" + pasted_text.split("1番車", 1)[1]
+
+# フッターノイズの除去（発売票数など以降をカット）
+if "発売票数" in clean_text:
+    clean_text = clean_text.split("発売票数")[0]
+
 # --- 車番数の自動判定 & 手動選択 ---
-all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', pasted_text) if pasted_text else []
+all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', clean_text)
 raw_data_count = len(all_odds_raw_temp)
 
 # データ数に応じた推定車番
@@ -41,11 +55,7 @@ if selected_mode == "自動判定":
 else:
     car_count_mode = selected_mode
 
-if not pasted_text.strip():
-    st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
-    st.stop()
-
-# --- 各車立ての本来の必要データ数（三連単の全通り数） ---
+# 各車立ての本来の必要データ数（三連単の全通り数）
 expected_counts = {
     9: 504,  # 9 * 8 * 7
     8: 336,  # 8 * 7 * 6
@@ -54,18 +64,13 @@ expected_counts = {
 
 target_count = expected_counts.get(car_count_mode, 210)
 
-# 【重要】余分なデータ（末尾のシステム文字等）がいくつ混ざっていても、
-# 設定された車立ての本来の組み合わせ数（7車なら210個）に強制的にスライスする
-if len(all_odds_raw_temp) > target_count:
-    all_odds_raw = all_odds_raw_temp[:target_count]
-    st.caption(f"ℹ️ 検出されたデータが多いため、先頭から正確な {target_count} 件分に調整しました。")
-else:
-    all_odds_raw = all_odds_raw_temp
+# 正しい個数にスライス
+all_odds_raw = all_odds_raw_temp[:target_count]
 
 if len(all_odds_raw) < target_count:
     st.warning(f"⚠️ オッズデータが不足しています。（検出: {len(all_odds_raw)}件 / 必要: {target_count}件）")
 
-# --- 以降の計算ロジック ---
+# --- 計算ロジック ---
 cars = list(range(1, car_count_mode + 1))
 
 def get_combinations(first_car, all_cars):
@@ -148,11 +153,11 @@ support_rates = {car: (inv / total_inv) * 100 for car, inv in inv_totals.items()
 # --- 車立てごとの対象順位・除外ルール設定 ---
 if car_count_mode == 9:
     target_ranks = [1, 3, 4, 5]
-    exclude_pair = {3, 5}  # 9車立ては3番人気と5番人気を除外
+    exclude_pair = {3, 5}
     st.markdown("### 🎯 9車立て 買い目構成（1, 3, 4, 5番人気 / 5点買い）")
 else:
     target_ranks = [1, 2, 3, 4]
-    exclude_pair = {2, 4}  # 7・8車立ては2番人気と4番人気を除外
+    exclude_pair = {2, 4}
     st.markdown(f"### 🎯 {car_count_mode}車立て 買い目構成（1, 2, 3, 4番人気 / 5点買い）")
 
 # ピックアップ車番一覧の表示
@@ -180,7 +185,7 @@ for r_target in target_ranks:
 st.markdown("#### 📋 ピックアップ車番一覧")
 st.table(pd.DataFrame(target_data))
 
-# --- ワイド買い目（4車ボックス6点から1点除外して5点にする） ---
+# --- ワイド買い目 ---
 target_cars_map = {r: rank_to_cars.get(r, [None])[0] for r in target_ranks}
 
 if None in target_cars_map.values():
