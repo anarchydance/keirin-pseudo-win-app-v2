@@ -21,23 +21,34 @@ if not pasted_text.strip():
     st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
     st.stop()
 
-# --- クレンジング（オッズ表エリアの切り出し） ---
-target_text = pasted_text
-if "1番車" in target_text:
-    target_text = "1番車" + target_text.split("1番車", 1)[1]
-if "発売票数" in target_text:
-    target_text = target_text.split("発売票数")[0]
+# --- ブロックごとに完全分解してオッズを抽出する堅牢ロジック ---
+# 「1番車」「2番車」などの区切りごとにテキストを分割
+car_blocks = re.split(r'(\d)番車\s*全選択', pasted_text)
 
-all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', target_text)
-raw_data_count = len(all_odds_raw_temp)
+records = []
+
+if len(car_blocks) > 1:
+    # 各車番のブロックごとにループ（1番車、2番車…）
+    for i in range(1, len(car_blocks), 2):
+        car_num = int(car_blocks[i])
+        block_text = car_blocks[i+1]
+        
+        # そのブロック内にある全ての小数点付き数値を抽出
+        odds_list = re.findall(r'(\d{1,5}\.\d+)', block_text)
+        
+        for odds_str in odds_list:
+            try:
+                odds_val = float(odds_str)
+                # 異常値や9999などの飛ばし用オッズ以外を対象にする
+                if 0 < odds_val < 9999:
+                    records.append({"first": car_num, "odds": odds_val})
+            except ValueError:
+                pass
 
 # 車番数の判定
-estimated_cars = 9
-if raw_data_count >= 450:
-    estimated_cars = 9
-elif raw_data_count >= 280:
-    estimated_cars = 8
-elif raw_data_count >= 150:
+detected_cars = sorted(list(set([r["first"] for r in records])))
+estimated_cars = max(detected_cars) if detected_cars else 7
+if estimated_cars not in [7, 8, 9]:
     estimated_cars = 7
 
 col1, col2 = st.columns([2, 1])
@@ -47,70 +58,27 @@ with col1:
 
 if selected_mode == "自動判定":
     car_count_mode = estimated_cars
-    st.info(f"💡 抽出オッズ数（{raw_data_count}件）から **{car_count_mode}車立て** として判定しました。")
+    st.info(f"💡 検出車番から **{car_count_mode}車立て** として判定しました。")
 else:
     car_count_mode = selected_mode
 
-expected_counts = {9: 504, 8: 336, 7: 210}
-target_count = expected_counts.get(car_count_mode, 210)
-all_odds_raw = all_odds_raw_temp[:target_count]
-
-if len(all_odds_raw) < target_count:
-    st.warning(f"⚠️ オッズデータが不足しています。（検出: {len(all_odds_raw)}件 / 必要: {target_count}件）")
-
-# --- 【完全改修】KEIRIN.JPの実際のテキスト並び順（列優先）に合わせた組み合わせ生成 ---
 cars = list(range(1, car_count_mode + 1))
-
-def get_keirin_jp_combinations(first_car, all_cars):
-    """KEIRIN.JPの三連単オッズテキストの並び順通りに組み合わせを作る"""
-    other_cars = [c for c in all_cars if c != first_car]
-    combs = []
-    
-    # 車立てごとの列数（3着になれる車の数 - 1）
-    # 7車立てなら1着除いて6車、各表は3列構成（各列2車）
-    cols_count = car_count_mode - 4
-    num_others = len(other_cars)
-    
-    # 列（3着グループ）ごとに上から下へ並んでいる
-    for col_idx in range(cols_count):
-        # 列ごとの2着車と3着車のグループを抽出
-        c2_group = [other_cars[col_idx], other_cars[col_idx + 1], other_cars[(col_idx + 2) % num_others]]
-        # 実際テキストに並ぶ順序でパース
-        for c2 in other_cars:
-            for c3 in other_cars:
-                if c2 != c3:
-                    # この並び順パターンを生成
-                    pass
-    
-    # 確実なインデックスマッピング：1着車番ごとに順番通り割り当てる
-    # KEIRIN.JPテキストの標準並び順
-    simple_combs = []
-    for c2 in other_cars:
-        for c3 in other_cars:
-            if c2 != c3:
-                simple_combs.append((first_car, c2, c3))
-    return simple_combs
-
-# 1着車ごとに各30通り（7車立て）のオッズを正しく集計
-records = []
-per_car_count = (car_count_mode - 1) * (car_count_mode - 2)
-
-for car_idx, first_car in enumerate(cars):
-    start_i = car_idx * per_car_count
-    end_i = start_i + per_car_count
-    car_odds_list = all_odds_raw[start_i:end_i]
-    
-    for odds_str in car_odds_list:
-        try:
-            records.append({"first": first_car, "odds": float(odds_str)})
-        except ValueError:
-            pass
 
 if not records:
     st.error("オッズデータを自動検出できませんでした。")
     st.stop()
 
-st.success(f"データ解析成功！ （使用データ: {len(records)} 組 / 設定: {car_count_mode}車立て）")
+# --- 【デバッグ表示】各車番ごとに何件のオッズが紐づいたかを表示 ---
+st.markdown("#### 🛠️ デバッグ：車番ごとのオッズ検出状況")
+debug_summary = []
+for c in cars:
+    c_odds = [r["odds"] for r in records if r["first"] == c]
+    debug_summary.append({
+        "車番": f"{c}番車",
+        "検出オッズ数": f"{len(c_odds)}件",
+        "最初のオッズ": f"{c_odds[0] if c_odds else 'なし'}"
+    })
+st.table(pd.DataFrame(debug_summary))
 
 # --- 擬似単勝オッズ計算 ---
 pseudo_odds_map = {}
@@ -119,7 +87,7 @@ for car in cars:
     car_records = [r for r in records if r["first"] == car]
     if not car_records:
         continue
-    valid_odds = [r["odds"] for r in car_records if 0 < r["odds"] < 9998]
+    valid_odds = [r["odds"] for r in car_records]
     if valid_odds:
         inv_sum = sum(1.0 / odds for odds in valid_odds)
         if inv_sum > 0:
@@ -170,7 +138,6 @@ else:
     exclude_pair = {2, 4}
     st.markdown(f"### 🎯 {car_count_mode}車立て 買い目構成（1, 2, 3, 4番人気 / 5点買い）")
 
-# ピックアップ車番一覧の表示
 target_data = []
 for r_target in target_ranks:
     cars_at_rank = rank_to_cars.get(r_target, [])
@@ -202,7 +169,6 @@ if None in target_cars_map.values():
     st.warning("指定された人気順位に対応する車番を特定できませんでした。")
 else:
     all_pairs = list(itertools.combinations(target_ranks, 2))
-    
     purchase_bets = []
     excluded_bets = []
     
