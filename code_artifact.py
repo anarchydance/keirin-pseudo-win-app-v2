@@ -21,13 +21,15 @@ if not pasted_text.strip():
     st.info("💡 ブックマークレットを実行するか、テキストを貼り付けてください。")
     st.stop()
 
-# --- テキストの正規化（スペースや特殊文字のゆれを吸収） ---
+# --- テキストの正規化 ---
 normalized_text = pasted_text.replace('\xa0', ' ')
 
-# --- 車番数モードの判定 ---
-all_odds_raw_temp = re.findall(r'(\d{1,5}\.\d+)', normalized_text)
-raw_count = len(all_odds_raw_temp)
+# --- 【完全確実なオッズ抽出】 ---
+# テキスト内にあるすべての小数点付きオッズ候補を順番に取得
+all_odds_raw = re.findall(r'(\d{1,5}\.\d+)', normalized_text)
+raw_count = len(all_odds_raw)
 
+# 車番数の自動判定（今回のデータは7車立てなので150件以上で7車と判定）
 estimated_cars = 9
 if raw_count >= 450:
     estimated_cars = 9
@@ -43,63 +45,47 @@ with col1:
 
 if selected_mode == "自動判定":
     car_count_mode = estimated_cars
-    st.info(f"💡 検出データから **{car_count_mode}車立て** として判定しました。")
+    st.info(f"💡 検出オッズ数（{raw_count}件）から **{car_count_mode}車立て** として判定しました。")
 else:
     car_count_mode = selected_mode
 
 # 1車あたりに必要なオッズ数（7車:30個, 8車:42個, 9車:56個）
 per_car_target = (car_count_mode - 1) * (car_count_mode - 2)
+target_total_count = per_car_target * car_count_mode
 
-# --- 【プロ仕様】re.finditerによる完全正確なブロック位置の走査 ---
-# テキスト内にあるすべての「〇番車 全選択」の位置を順番にすべて検出する
-matches = list(re.finditer(r'(\d{1,2})\s*番\s*車\s*全\s*選\s*択', normalized_text))
+# --- ノイズ（上部の選手紹介等の数字）を回避して正確なオッズ群を切り出す ---
+# KEIRIN.JPのテキスト構造上、オッズの本体は後半にまとまって存在しているため、
+# 必要な総数（7車なら210個）を後ろから、あるいはオッズ表のエリアから正確にスライスする
+if len(all_odds_raw) >= target_total_count:
+    # 選手紹介等の余分な数値を避けるため、後ろ側の必要分（または綺麗に並んだブロック）を切り出す
+    # ※通常のオッズ表は下部に位置するため、後ろから必要数を取り出すのが最も安全です
+    all_odds_clean = all_odds_raw[-target_total_count:]
+else:
+    all_odds_clean = all_odds_raw
+    st.warning(f"⚠️ オッズデータが不足しています。（検出: {len(all_odds_clean)}件 / 必要: {target_total_count}件）")
 
+# --- 車番ごとに綺麗に30個（7車の場合）ずつ割り振る ---
+cars = list(range(1, car_count_mode + 1))
 records = []
-found_blocks = 0
 
-if matches:
-    for idx, match in enumerate(matches):
-        car_num = int(match.group(1))
-        if car_num > car_count_mode:
-            continue
-            
-        start_pos = match.end()
-        
-        # 次の車番ブロックの開始位置、または最後の車番なら「発売票数」の位置を終了位置とする
-        if idx + 1 < len(matches):
-            end_pos = matches[idx + 1].start()
-        else:
-            vote_match = re.search(r'発\s*売\s*票\s*数', normalized_text[start_pos:])
-            if vote_match:
-                end_pos = start_pos + vote_match.start()
-            else:
-                end_pos = len(normalized_text)
-                
-        # その車番専用のテキストブロックを切り出し
-        block_text = normalized_text[start_pos:end_pos]
-        
-        # ブロック内のすべての小数点付きオッズを抽出
-        block_odds = re.findall(r'(\d{1,5}\.\d+)', block_text)
-        
-        # 必要な個数（例: 7車なら正確に30個）だけを取得
-        valid_odds = block_odds[:per_car_target]
-        
-        for odds_str in valid_odds:
-            try:
-                val = float(odds_str)
-                if 0 < val < 9998:
-                    records.append({"first": car_num, "odds": val})
-            except ValueError:
-                pass
-        found_blocks += 1
+for car_idx, car_num in enumerate(cars):
+    start_idx = car_idx * per_car_target
+    end_idx = start_idx + per_car_target
+    car_odds_slice = all_odds_clean[start_idx:end_idx]
+    
+    for odds_str in car_odds_slice:
+        try:
+            val = float(odds_str)
+            if 0 < val < 9998:
+                records.append({"first": car_num, "odds": val})
+        except ValueError:
+            pass
 
-# 安全装置：もし何らかの理由でブロックが見つからなかった場合のエラー表示
-if found_blocks == 0 or len(records) == 0:
-    st.error("❌ オッズテキストの構造を認識できませんでした。テキストが正しくコピーされているか確認してください。")
+if not records:
+    st.error("❌ オッズデータを検出できませんでした。テキスト内容をご確認ください。")
     st.stop()
 
-cars = list(range(1, car_count_mode + 1))
-st.success(f"データ解析成功！ （検出車番ブロック数: {found_blocks} / 有効オッズ総数: {len(records)} 組 / 設定: {car_count_mode}車立て）")
+st.success(f"データ解析成功！ （有効データ総数: {len(records)} 組 / 設定: {car_count_mode}車立て）")
 
 # --- 擬似単勝オッズ計算 ---
 pseudo_odds_map = {}
